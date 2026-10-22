@@ -20,12 +20,14 @@ Do not upgrade your only production database in place.
    log_level: info
    safe_mode: false
    server_repo: loic294/server@playlist-playback-test
-   frontend_repo: loic294/frontend@playlist-playback-test
+   frontend_repo: ""
    ```
 
-6. Start the DEV app and wait for **both** source installations and the frontend
-   build to finish. This can take several minutes. Leaving `frontend_repo` blank
-   would use the bundled UI instead of our UI changes.
+6. Start the DEV app and wait for the server installation to finish. This can
+   take several minutes. Leave `frontend_repo` empty: this server branch installs
+   our prebuilt frontend wheel as a pinned, SHA-256-verified dependency.
+   Expect `Step 2: Skipping Frontend Build`. This is intentional and still loads
+   our UI changes, not the upstream UI.
 7. Check the log for `Playlist DEV profile: web port 8195, stream port 8197,
    Sendspin port 9027`.
 8. Open **http://HOME_ASSISTANT_IP:8195** directly. On this network that is
@@ -50,10 +52,29 @@ profile disables both its ingress listener and ingress-based Home Assistant
 auto-announcement to avoid conflicts or accidentally announcing production.
 Use the direct URL above; the DEV app's startup log also explains this.
 
-The official DEV app builds and installs the fork sources itself. There is no
-custom Docker image to build, publish or select. Restart it after pushing a source
-change to fetch/build the updated branch. Its own tooling manages the official
-image's dependencies and provider application variables.
+The official DEV app builds and installs the fork server itself. There is no
+custom Docker image to build, publish or select. Its own tooling manages the
+official image's dependencies and provider application variables.
+
+### Low-memory hosts and frontend updates
+
+On Home Assistant Green, compiling the frontend alongside production caused a
+host-wide out-of-memory kill: the kernel killed Node during Vite's `transforming`
+phase at roughly 1.29 GiB resident memory. Retrying startup repeats that build.
+The warning about Vite's future native config loader is unrelated.
+
+The frontend fork's manual **Publish playlist test frontend** workflow runs tests,
+lint, type checking and bundling on GitHub Actions, then publishes a uniquely
+versioned Python wheel and checksums in a prerelease. The server's
+`pyproject.toml` and generated `requirements_all.txt` point at that exact wheel,
+including its SHA-256 hash. The official DEV app installs it without running Node.
+No production shutdown, extra swap, or custom Docker image is required.
+
+After frontend changes, run that workflow on `playlist-playback-test`, verify it
+succeeds, update the server's wheel URL/hash, regenerate requirements, and push.
+Do not use a moving `latest` asset URL. After server or pinned-frontend updates,
+restart the DEV app to fetch/install the updated branch. Keep `frontend_repo`
+empty, or the official app will build from source again.
 
 To roll back, stop the DEV app. Your normal server and its data remain unchanged.
 Do not copy a live database between apps or open a development database with 2.10.7.

@@ -7,16 +7,25 @@ import pytest
 from scripts.prepare_test_release import prepare, set_project_version
 
 
-def test_prepare_pins_both_packages_and_image_requirements(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    "frontend_pin",
+    [
+        "music-assistant-frontend==2.17.347",
+        "music-assistant-frontend @ "
+        "https://example.com/music_assistant_frontend-2.17.347-py3-none-any.whl#sha256=" + "a" * 64,
+    ],
+)
+def test_prepare_pins_both_packages_and_image_requirements(
+    tmp_path: Path, frontend_pin: str
+) -> None:
     """The image resolves its custom frontend from the local wheel directory."""
     frontend = tmp_path / "frontend"
     frontend.mkdir()
     (tmp_path / "pyproject.toml").write_text(
-        '[project]\nversion = "0.0.0"\n'
-        'dependencies = ["music-assistant-frontend==2.17.347", "other==1"]\n'
+        f'[project]\nversion = "0.0.0"\ndependencies = ["{frontend_pin}", "other==1"]\n'
     )
     (frontend / "pyproject.toml").write_text('[project]\nversion = "0.0.0"\n')
-    (tmp_path / "requirements_all.txt").write_text("music-assistant-frontend==2.17.347\nother==1\n")
+    (tmp_path / "requirements_all.txt").write_text(f"{frontend_pin}\nother==1\n")
 
     prepare(tmp_path, frontend, "2.11.0.dev1001")
 

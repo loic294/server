@@ -25,7 +25,11 @@ def prepare(root: Path, frontend: Path, version: str) -> None:
         raise ValueError("Expected a unique 2.11.0.devN test version")
     project = root / "pyproject.toml"
     dependencies = tomllib.loads(project.read_text())["project"]["dependencies"]
-    pins = [dep for dep in dependencies if dep.startswith("music-assistant-frontend==")]
+    pins = [
+        dep
+        for dep in dependencies
+        if dep.startswith(("music-assistant-frontend==", "music-assistant-frontend @ "))
+    ]
     if len(pins) != 1:
         raise ValueError("Expected exactly one pinned frontend dependency")
     old_pin = pins[0]

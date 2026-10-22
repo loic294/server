@@ -1,5 +1,5 @@
 name: Music Assistant - Playlist Test
-version: 2.11.0.dev1
+version: 2.11.0.dev1001
 slug: music_assistant_playlist_test
 description: Unofficial test server with podcast and audiobook playlist playback settings.
 url: https://github.com/loic294/server/tree/playlist-playback-test

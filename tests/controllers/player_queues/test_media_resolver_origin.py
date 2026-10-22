@@ -17,7 +17,14 @@ from unittest.mock import AsyncMock, Mock, patch
 import pytest
 from music_assistant_models.auth import User, UserRole
 from music_assistant_models.config_entries import ProviderAccess
-from music_assistant_models.enums import ContentType, ExternalID, MediaType, ProviderSharing
+from music_assistant_models.enums import (
+    ContentType,
+    ExternalID,
+    MediaType,
+    ProviderSharing,
+    SortDirection,
+    SortField,
+)
 from music_assistant_models.helpers import get_global_cache_value, set_global_cache_values
 from music_assistant_models.media_items import (
     Album,
@@ -109,6 +116,10 @@ def _resolver() -> MediaResolver:
     resolver.mass.create_task = Mock(side_effect=lambda coro: coro)
     resolver.mass.music.mark_item_played = Mock()
     resolver.mass.music.albums.get_library_item_by_prov_id = AsyncMock(return_value=None)
+    resolver.mass.music.playlists.get_library_item_by_prov_id = AsyncMock(return_value=None)
+    resolver.mass.music.playlists.playback_settings = Mock(
+        return_value={"spoken_word": False, "remove_finished": False}
+    )
     return resolver
 
 
@@ -138,6 +149,50 @@ async def test_a_provider_playlist_pins_each_track_to_its_entry() -> None:
     assert [_container(x) for x in resolved] == [ItemMapping.from_item(playlist)] * 2
     assert _container(resolved[0]).media_type == MediaType.PLAYLIST
     assert [_pin(x) for x in resolved] == [(TIDAL, "t1"), (TIDAL, "t2")]
+
+
+@pytest.mark.parametrize(
+    ("sort_field", "sort_direction"),
+    [
+        (None, None),
+        (SortField.NAME, SortDirection.ASC),
+        (SortField.NAME, SortDirection.DESC),
+        (SortField.POSITION, SortDirection.DESC),
+        (SortField.TIMESTAMP_ADDED, SortDirection.DESC),
+    ],
+)
+async def test_spoken_word_uses_library_settings_and_selected_playlist_order(
+    sort_field: SortField | None, sort_direction: SortDirection | None
+) -> None:
+    """A provider URI keeps its library settings without overriding the selected sort."""
+    resolver = _resolver()
+    source = _playlist("builtin")
+    library = Playlist(
+        item_id="42",
+        provider="library",
+        name=source.name,
+        provider_mappings=source.provider_mappings,
+    )
+    track = _track("t1", TIDAL)
+    lookup = AsyncMock(return_value=library)
+    tracks = AsyncMock(return_value=[track])
+    resolver.get_playlist_tracks = tracks  # type: ignore[method-assign]
+
+    with (
+        patch.object(resolver.mass.music.playlists, "get_library_item_by_prov_id", lookup),
+        patch.object(
+            resolver.mass.music.playlists,
+            "playback_settings",
+            return_value={"spoken_word": True, "remove_finished": False},
+        ),
+    ):
+        resolved = await resolver._resolve_media_items(
+            source, sort_field=sort_field, sort_direction=sort_direction
+        )
+
+    assert _container(resolved[0]) == ItemMapping.from_item(library)
+    assert tracks.call_args.kwargs["sort_field"] == sort_field
+    assert tracks.call_args.kwargs["sort_direction"] == sort_direction
 
 
 @pytest.mark.parametrize(

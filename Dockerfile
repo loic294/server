@@ -69,6 +69,7 @@ RUN uv venv $VIRTUAL_ENV
 # Keep urllib3-future from hijacking the urllib3 namespace (see pyproject.toml).
 ENV URLLIB3_NO_OVERRIDE=1
 RUN uv pip install \
+    --find-links=dist \
     --index-strategy unsafe-best-match \
     --no-binary urllib3-future \
     -r requirements_all.txt

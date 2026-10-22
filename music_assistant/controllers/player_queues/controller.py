@@ -867,6 +867,8 @@ class PlayerQueuesController(QueueLoaderMixin, PlaybackTrackerMixin, StreamFeede
             self._set_transitioning(queue_id, False)
             return
 
+        if queue.current_item:
+            self._queue_data[queue_id].interrupted_item_ids.add(queue.current_item.queue_item_id)
         # immediately update current item so UI shows the new track right away
         queue.current_index = next_index
         queue.current_item = self.get_item(queue_id, next_index)
@@ -898,6 +900,8 @@ class PlayerQueuesController(QueueLoaderMixin, PlaybackTrackerMixin, StreamFeede
             raise InvalidCommand(f"Queue {queue_id} is not active")
         self._set_transitioning(queue_id, True)
         current_index = self._queue_data[queue_id].queue.current_index
+        if queue.current_item:
+            self._queue_data[queue_id].interrupted_item_ids.add(queue.current_item.queue_item_id)
         if current_index is None:
             self._set_transitioning(queue_id, False)
             return
@@ -1062,6 +1066,8 @@ class PlayerQueuesController(QueueLoaderMixin, PlaybackTrackerMixin, StreamFeede
         try:
             queue_data = self._queue_data[queue_id]
             queue = queue_data.queue
+            if queue.current_item and queue.state in (PlaybackState.PLAYING, PlaybackState.PAUSED):
+                queue_data.interrupted_item_ids.add(queue.current_item.queue_item_id)
             queue.resume_pos = 0
             # A queue picked up from its end plays its items over from the start, so a resume point
             # left on an audiobook/episode must not pull it back to where it was left off. The flag
@@ -1223,6 +1229,8 @@ class PlayerQueuesController(QueueLoaderMixin, PlaybackTrackerMixin, StreamFeede
                 queue.current_index = index
                 queue.current_item = queue_item
                 self.signal_update(queue_id)
+            # A successfully restarted item can finish naturally after a seek or resume.
+            queue_data.interrupted_item_ids.discard(queue_item.queue_item_id)
         finally:
             self._set_transitioning(queue_id, False)
 
@@ -2074,6 +2082,8 @@ class PlayerQueuesController(QueueLoaderMixin, PlaybackTrackerMixin, StreamFeede
         self.mass.cancel_task(f"prepare_next_audio_buffer_{queue_id}")
         self._set_transitioning(queue_id, False)
         queue_data = self._queue_data[queue_id]
+        if queue_data.queue.current_item:
+            queue_data.interrupted_item_ids.add(queue_data.queue.current_item.queue_item_id)
         session_id = queue_data.session_id
         if (queue := self.get(queue_id)) and queue.active:
             if queue.state == PlaybackState.PLAYING:

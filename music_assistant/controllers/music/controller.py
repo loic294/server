@@ -2239,6 +2239,7 @@ class MusicController(MusicDatabaseSetupMixin, CoreController):
         media_item: Audiobook | PodcastEpisode,
         userid: str | None = None,
         pinned: tuple[str, str] | None = None,
+        prefer_provider: bool = False,
     ) -> tuple[bool, int]:
         """
         Get progress (resume point) details for the given audiobook or episode.
@@ -2255,6 +2256,7 @@ class MusicController(MusicDatabaseSetupMixin, CoreController):
         :param userid: The user to get the resume point for, by default the session user.
         :param pinned: The (provider instance, item id) of the copy the item plays from, whose
             resume point is asked for first.
+        :param prefer_provider: Use known provider progress even when local progress is higher.
         """
         provider_fully_played = False
         provider_position_ms = 0
@@ -2305,6 +2307,8 @@ class MusicController(MusicDatabaseSetupMixin, CoreController):
                     provider_position_ms,
                     provider_timestamp,
                 ) = await provider.get_resume_position(prov_mapping.item_id, media_item.media_type)
+                if prefer_provider:
+                    return provider_fully_played, provider_position_ms
                 break  # Use first provider that returns data
 
         # Get MA's internal position from playlog

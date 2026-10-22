@@ -1,0 +1,11 @@
+.git
+.venv
+.pytest_cache
+.mypy_cache
+.ruff_cache
+**/__pycache__
+frontend
+appvars
+**/app_vars.json
+**/app_secrets.json
+*.log

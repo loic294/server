@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import math
 from collections.abc import AsyncGenerator
 from typing import TYPE_CHECKING, Any
 
@@ -16,6 +17,7 @@ from music_assistant_models.enums import (
     StreamType,
 )
 from music_assistant_models.errors import (
+    InvalidDataError,
     LoginFailed,
     MediaNotFoundError,
     ProviderUnavailableError,
@@ -418,28 +420,26 @@ class PocketCastsProvider(MusicProvider):
         """
         _, episode_uuid = item_id.split(":", 1)
 
-        try:
-            in_progress = await self._client.get_in_progress_episodes()
-        except (ProviderUnavailableError, ResourceTemporarilyUnavailable, RetriesExhausted) as err:
-            # resume is best-effort; a transient failure should not break playback
-            LOGGER.warning("Could not fetch resume position for %s: %s", episode_uuid, err)
-            return (False, 0, None)
-
-        for ep in in_progress:
-            if ep.get("uuid") == episode_uuid:
-                played_up_to = int(ep.get("playedUpTo") or 0)  # seconds from API
-                duration = int(ep.get("duration") or 0)
-                fully_played = duration > 0 and (played_up_to / duration) > FULLY_PLAYED_THRESHOLD
-                LOGGER.debug(
-                    "Resume position for %s: %d ms (fully_played=%s)",
-                    episode_uuid,
-                    played_up_to * 1000,
-                    fully_played,
-                )
-                return (fully_played, played_up_to * 1000, None)
-
-        LOGGER.debug("No in-progress entry for %s; resuming from start", episode_uuid)
-        return (False, 0, None)
+        # This uncached, single-episode endpoint also distinguishes a real zero and a
+        # completed episode; absence from the in-progress folder cannot establish either.
+        details = await self._client.get_episode_details(episode_uuid)
+        played_up_to = details.get("playedUpTo")
+        status = details.get("playingStatus")
+        if played_up_to is None and status in (1, 3):
+            played_up_to = 0
+        if played_up_to is None or status is None:
+            LOGGER.warning("Pocket Casts returned unknown progress for %s", episode_uuid)
+            raise NotImplementedError("Pocket Casts episode progress is unknown")
+        if (
+            isinstance(played_up_to, bool)
+            or not isinstance(played_up_to, int | float)
+            or not math.isfinite(played_up_to)
+            or played_up_to < 0
+            or isinstance(status, bool)
+            or status not in (1, 2, 3)
+        ):
+            raise InvalidDataError(f"Invalid Pocket Casts progress for {episode_uuid}")
+        return (status == 3, int(played_up_to * 1000), None)
 
     async def on_played(
         self,

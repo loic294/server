@@ -85,6 +85,40 @@ In most cases, you won't need to modify the models. However, if you do need to m
 
 **Note:** You must rerun this command whenever you add or remove files from the `models` repository to ensure the changes are picked up.
 
+## Podcast/Audiobook playlists
+
+Library playlists can opt into sequential spoken-word playback through
+`music/playlists/playback_settings` and `music/playlists/set_playback_settings`
+(`item_id`, `spoken_word`, `remove_finished`). Only the playlist owner or a library
+manager can change these settings. Both default to false for existing playlists.
+Preferences are stored separately from provider metadata under `playlist_playback`
+in the existing config store, so no database schema migration is needed.
+
+Normal Play uses the playlist listing's selected sort field and direction, starting
+with its first item, and resolves each episode/book's current provider progress
+close to playback, including provider rewinds and valid zero positions.
+Unsupported/unknown provider progress falls back to user-scoped local progress;
+provider failures are not verified zero progress. Pocket Casts reads its uncached
+single-episode status endpoint. This opt-in policy does not change ordinary
+playlists or direct episode playback's highest-known-progress policy.
+Spoken-word resume uses whole seconds without the usual half-second rewind.
+Completed items replay from zero. Explicit start-from-beginning and queue repeat
+retain their restart behavior. A saved/probed duration is reused; if a partially
+played item still has no duration after resolving full details, playback reports
+an error rather than silently restarting it.
+
+Remove finished items is independently opt-in and requires an editable, non-dynamic
+spoken-word playlist. It removes the source item, not the playback queue history.
+Completion follows a transition away from playing at the known duration (within
+the player's five-second reporting tolerance), never the looser podcast
+fully-played threshold. Explicit stop, skip, pause and replacement do not remove
+items. Seeking or resuming an item does not prevent its later natural-end removal.
+Unknown-duration and failed streams are not removed.
+`music/playlists/completed_items` returns the removed identities for a visible
+playlist, allowing sync clients to exclude them without marking remote episodes
+played or querying every episode. Disabling removal lets sync clients restore the
+provider's membership.
+
 ## Listing random order
 
 Server listing commands accept an optional integer `random_seed`. With `sort_field=random`,

@@ -7,8 +7,15 @@ from typing import TYPE_CHECKING, Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from music_assistant_models.access import PlaylistAccess
 from music_assistant_models.auth import User, UserRole
-from music_assistant_models.enums import ListingType, MediaType, SortDirection, SortField
+from music_assistant_models.enums import (
+    ListingType,
+    MediaType,
+    ProviderSharing,
+    SortDirection,
+    SortField,
+)
 from music_assistant_models.errors import (
     InvalidDataError,
     ProviderUnavailableError,
@@ -26,7 +33,11 @@ from music_assistant_models.media_items import (
     Track,
 )
 
-from music_assistant.constants import PlaylistPlayableItem
+from music_assistant.constants import (
+    DB_TABLE_MEDIA_PROGRESS,
+    DB_TABLE_PROVIDER_MAPPINGS,
+    PlaylistPlayableItem,
+)
 from music_assistant.controllers.cache.constants import BYPASS_CACHE
 from music_assistant.controllers.music.constants import CACHE_CATEGORY_LISTINGS
 from music_assistant.models.music_provider import MusicProvider
@@ -339,6 +350,99 @@ async def test_a_cached_playlist_rebuilds_every_kind_of_item(mass: MusicAssistan
     assert [type(item) for item in cached] == [Track, Radio, PodcastEpisode, Audiobook]
     assert _ids(cached) == ["track", "radio", "episode", "book"]
     assert cast("PodcastEpisode", cached[2]).podcast.item_id == "show"
+    assert provider.pages_fetched == 2
+
+
+async def test_remaining_time_restores_current_user_progress_outside_playlist_cache(
+    mass: MusicAssistant,
+) -> None:
+    """A cached playlist uses current per-user progress, including rewinds to zero."""
+    episode = PodcastEpisode(
+        item_id="episode",
+        provider=INSTANCE,
+        name="Episode",
+        duration=3600,
+        position=1,
+        resume_position_ms=990_000,
+        provider_mappings={
+            ProviderMapping(
+                item_id="episode", provider_domain="spotify", provider_instance=INSTANCE
+            )
+        },
+        podcast=ItemMapping(
+            media_type=MediaType.PODCAST, item_id="show", provider=INSTANCE, name="Show"
+        ),
+    )
+    book = Audiobook(
+        item_id="book",
+        provider=INSTANCE,
+        name="Book",
+        duration=7200,
+        position=2,
+        resume_position_ms=600_000,
+        provider_mappings={
+            ProviderMapping(item_id="book", provider_domain="spotify", provider_instance=INSTANCE)
+        },
+    )
+    provider = _StubPlaylistProvider([episode, book])
+    source = _playlist(INSTANCE, PLAYLIST_ID)
+    source.access = PlaylistAccess(owner=USER_A.user_id, sharing=ProviderSharing.EVERYONE)
+    stored = await mass.music.playlists.add_item_to_library(source)
+    mass.config.set(f"playlist_playback/{stored.item_id}/show_remaining_time", True)
+    await mass.music.database.insert(
+        DB_TABLE_PROVIDER_MAPPINGS,
+        {
+            "media_type": MediaType.AUDIOBOOK.value,
+            "item_id": 99,
+            "provider_domain": "spotify",
+            "provider_instance": INSTANCE,
+            "provider_item_id": book.item_id,
+            "available": True,
+            "in_library": True,
+        },
+    )
+    for item, user, seconds in (
+        (episode, USER_A, 300),
+        (episode, USER_B, 500),
+        (book, USER_A, 0),
+    ):
+        await mass.music.database.insert(
+            DB_TABLE_MEDIA_PROGRESS,
+            {
+                "item_id": "99" if isinstance(item, Audiobook) else item.item_id,
+                "provider": "library" if isinstance(item, Audiobook) else item.provider,
+                "media_type": item.media_type.value,
+                "name": item.name,
+                "timestamp": 100,
+                "fully_played": False,
+                "seconds_played": seconds,
+                "userid": user.user_id,
+            },
+        )
+    with (
+        _with_provider(mass, provider),
+        patch(
+            "music_assistant.controllers.music.media.playlists.get_current_user",
+            return_value=USER_A,
+        ),
+    ):
+        result_a = await mass.music.playlists.tracks(stored.item_id, "library")
+    assert [
+        item.resume_position_ms for item in result_a if isinstance(item, PodcastEpisode | Audiobook)
+    ] == [300_000, 0]
+    with (
+        _with_provider(mass, provider),
+        patch(
+            "music_assistant.controllers.music.media.playlists.get_current_user",
+            return_value=USER_B,
+        ),
+    ):
+        result_b = await mass.music.playlists.tracks(stored.item_id, "library")
+    assert [
+        item.resume_position_ms for item in result_b if isinstance(item, PodcastEpisode | Audiobook)
+    ] == [500_000, 600_000]
+    assert episode.resume_position_ms == 990_000
+    assert book.resume_position_ms == 600_000
     assert provider.pages_fetched == 2
 
 

@@ -164,6 +164,11 @@ def _controller(**queue_kwargs: Any) -> Any:
     ctrl = PlayerQueuesController.__new__(PlayerQueuesController)
     ctrl.logger = Mock()
     ctrl.mass = MagicMock()
+    ctrl.mass.music.playlists.get_library_item_by_prov_id = AsyncMock(return_value=None)
+    ctrl.mass.music.playlists.playback_settings.return_value = {
+        "spoken_word": False,
+        "remove_finished": False,
+    }
     ctrl.mass.players.get_player = Mock(return_value=Mock(extra_data={}))
     lock_cm = MagicMock()
     lock_cm.__aenter__ = AsyncMock(return_value=None)
@@ -324,6 +329,31 @@ async def test_an_album_switches_shuffle_off_for_a_derived_enqueue_option() -> N
     # the option was derived from the album's configured default (which is 'replace')
     assert ctrl.get_config_value.call_args.args[0] == "default_enqueue_option_album"
     assert _queue(ctrl).shuffle_enabled is False
+
+
+@pytest.mark.parametrize("provider", ["library", "test"])
+async def test_spoken_word_playlist_starts_in_order_instead_of_inherited_shuffle(
+    provider: str,
+) -> None:
+    """Normal Play starts the first spoken-word item even when the previous queue was shuffled."""
+    ctrl = _controller(shuffle_enabled=True)
+    playlist = _playlist()
+    playlist.provider = provider
+    ctrl.mass.music.playlists.get_library_item_by_prov_id.return_value = Playlist(
+        item_id="42",
+        provider="library",
+        name=playlist.name,
+        provider_mappings=playlist.provider_mappings,
+    )
+    ctrl.mass.music.playlists.playback_settings.return_value = {
+        "spoken_word": True,
+        "remove_finished": False,
+    }
+
+    await ctrl.play_media("q1", playlist, QueueOption.REPLACE)
+
+    assert not _queue(ctrl).shuffle_enabled
+    assert _played_order(ctrl) == ALBUM_TRACKS
     assert _played_order(ctrl) == ALBUM_TRACKS
 
 

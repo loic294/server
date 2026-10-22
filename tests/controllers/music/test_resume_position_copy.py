@@ -8,8 +8,10 @@ copy it plays from is asked first, the others follow in a fixed order.
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
+from music_assistant_models.auth import User, UserRole
 from music_assistant_models.media_items import Audiobook, ProviderMapping
 
 from music_assistant.controllers.music import MusicController
@@ -83,3 +85,51 @@ async def test_the_other_copies_are_asked_in_a_fixed_order() -> None:
 
     pinned.get_resume_position.assert_awaited_once()
     assert resume == (False, 1_000)
+
+
+@pytest.mark.parametrize("position", [0, 900_000, 2_034_000])
+async def test_spoken_word_prefers_known_provider_progress_even_after_rewind(position: int) -> None:
+    """A known provider zero or rewind is authoritative only for opted-in playlist playback."""
+    account = _account("spotify--a", position)
+    account.get_resume_position.return_value = (False, position, None)
+    music = _music(account)
+    with patch.object(
+        music.database,
+        "get_row",
+        AsyncMock(return_value={"seconds_played": 2400, "fully_played": False, "timestamp": 1000}),
+    ) as lookup:
+        assert await music.get_resume_position(_book("spotify--a"), prefer_provider=True) == (
+            False,
+            position,
+        )
+        lookup.assert_not_awaited()
+        assert await music.get_resume_position(_book("spotify--a")) == (False, 2_400_000)
+
+
+@pytest.mark.parametrize(("user_id", "seconds"), [("listener-a", 45), ("listener-b", 90)])
+async def test_unknown_provider_falls_back_to_the_playback_users_progress(
+    user_id: str, seconds: int
+) -> None:
+    """Unknown is distinct from valid zero, and fallback remains scoped to the listener."""
+    music = _music(_account("spotify--a", None))
+    with (
+        patch.object(
+            music.mass.webserver.auth,
+            "get_user",
+            AsyncMock(return_value=User(user_id=user_id, username=user_id, role=UserRole.USER)),
+        ),
+        patch.object(
+            music.database,
+            "get_row",
+            AsyncMock(
+                return_value={"seconds_played": seconds, "fully_played": False, "timestamp": 1000}
+            ),
+        ) as lookup,
+        patch(
+            "music_assistant.controllers.music.controller.visible_music_sources", return_value=None
+        ),
+    ):
+        assert await music.get_resume_position(
+            _book("spotify--a"), userid=user_id, prefer_provider=True
+        ) == (False, seconds * 1000)
+        assert lookup.call_args.args[1]["userid"] == user_id

@@ -753,6 +753,35 @@ class PlaybackTrackerMixin(_PlayerQueuesBase):
 
         is_playing = is_current_item and queue.state == PlaybackState.PLAYING
 
+        if is_playing and (
+            prev_state["state"] != PlaybackState.PLAYING or prev_item_id != cur_item_id
+        ):
+            queue_data.interrupted_item_ids.discard(item_to_report.queue_item_id)
+        if (
+            not is_playing
+            and new_state["state"] != PlaybackState.PAUSED
+            and prev_state["state"] == PlaybackState.PLAYING
+            and seconds_played >= duration - 5
+            and (
+                item_to_report.duration
+                or (item_to_report.streamdetails and item_to_report.streamdetails.duration)
+            )
+            and item_to_report.queue_item_id not in queue_data.interrupted_item_ids
+            and item_to_report.queue_item_id not in queue_data.completed_playlist_item_ids
+            and (origin := item_to_report.origin) is not None
+            and origin.container is not None
+            and origin.container.media_type == MediaType.PLAYLIST
+            and origin.container.provider == "library"
+        ):
+            settings = self.mass.music.playlists.playback_settings(origin.container.item_id)
+            if settings["spoken_word"] and settings["remove_finished"]:
+                queue_data.completed_playlist_item_ids.add(item_to_report.queue_item_id)
+                self.mass.create_task(
+                    self.mass.music.playlists.remove_finished_item(
+                        origin.container.item_id, media_item.uri, queue_data.userid
+                    )
+                )
+
         if self.logger.isEnabledFor(VERBOSE_LOG_LEVEL):
             self.logger.debug(
                 "%s %s '%s' (%s) - Fully played: %s - Progress: %s (%s/%ss)",

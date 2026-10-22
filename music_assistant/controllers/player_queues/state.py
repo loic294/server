@@ -99,6 +99,9 @@ class PlayerQueueData:
     # queue on, one of these: a player can name an item it never received (one from its own
     # cached copy of the queue that the stream server then refused), and nothing of it has played
     served_item_ids: set[str] = field(default_factory=set)
+    # Explicit stop/skip/replacement must never count as a natural playlist completion.
+    interrupted_item_ids: set[str] = field(default_factory=set)
+    completed_playlist_item_ids: set[str] = field(default_factory=set)
     # set when the queue items changed since the last cache write; the debounced saver writes the
     # (heavier) items payload only when this is set
     items_cache_dirty: bool = False

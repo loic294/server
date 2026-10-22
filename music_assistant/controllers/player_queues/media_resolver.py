@@ -1126,6 +1126,17 @@ class MediaResolver:
             media_item = await self.mass.music.get_item_by_uri(media_item.uri)
         if media_item.media_type == MediaType.PLAYLIST:
             media_item = cast("Playlist", media_item)
+            if media_item.provider != "library":
+                library_playlist = await self.mass.music.playlists.get_library_item_by_prov_id(
+                    media_item.item_id, media_item.provider
+                )
+                if (
+                    library_playlist
+                    and self.mass.music.playlists.playback_settings(library_playlist.item_id)[
+                        "spoken_word"
+                    ]
+                ):
+                    media_item = library_playlist
             playlist_tracks = await self.get_playlist_tracks(
                 media_item,
                 start_item,

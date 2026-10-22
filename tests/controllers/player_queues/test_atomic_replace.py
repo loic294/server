@@ -69,6 +69,11 @@ def _controller(**queue_kwargs: Any) -> Any:
     ctrl = PlayerQueuesController.__new__(PlayerQueuesController)
     ctrl.logger = Mock()
     ctrl.mass = MagicMock()
+    ctrl.mass.music.playlists.get_library_item_by_prov_id = AsyncMock(return_value=None)
+    ctrl.mass.music.playlists.playback_settings.return_value = {
+        "spoken_word": False,
+        "remove_finished": False,
+    }
     ctrl.mass.players.get_player = Mock(return_value=Mock(extra_data={}))
     lock_cm = MagicMock()
     lock_cm.__aenter__ = AsyncMock(return_value=None)

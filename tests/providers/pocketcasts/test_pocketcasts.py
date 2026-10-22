@@ -157,16 +157,45 @@ async def test_get_podcast_episode_handles_null_fields(
 async def test_get_resume_position_handles_null_fields(
     provider: PocketCastsProvider, client: AsyncMock
 ) -> None:
-    """A null playedUpTo/duration on an in-progress entry yields a zero resume point."""
-    client.get_in_progress_episodes.return_value = [
-        {"uuid": "episode-1", "playedUpTo": None, "duration": None}
-    ]
+    """A known unplayed episode may have a null playedUpTo and still has valid zero progress."""
+    client.get_episode_details.return_value = {"playedUpTo": None, "playingStatus": 1}
 
     assert await provider.get_resume_position("podcast-1:episode-1", MediaType.PODCAST_EPISODE) == (
         False,
         0,
         None,
     )
+
+
+async def test_resume_uses_fresh_single_episode_status(
+    provider: PocketCastsProvider, client: AsyncMock
+) -> None:
+    """Resume reads current provider status, including a rewind or explicit zero."""
+    for position in (2034, 900, 0):
+        client.get_episode_details.return_value = {"playedUpTo": position, "playingStatus": 2}
+        assert await provider.get_resume_position(
+            "podcast-1:episode-1", MediaType.PODCAST_EPISODE
+        ) == (False, position * 1000, None)
+    assert client.get_episode_details.await_count == 3
+    client.get_in_progress_episodes.assert_not_awaited()
+
+
+async def test_unknown_resume_does_not_masquerade_as_zero(
+    provider: PocketCastsProvider, client: AsyncMock
+) -> None:
+    """An incomplete provider response is unknown progress, not a verified zero."""
+    client.get_episode_details.return_value = {"playedUpTo": None, "playingStatus": 2}
+    with pytest.raises(NotImplementedError, match="unknown"):
+        await provider.get_resume_position("podcast-1:episode-1", MediaType.PODCAST_EPISODE)
+
+
+async def test_resume_provider_failure_is_not_zero(
+    provider: PocketCastsProvider, client: AsyncMock
+) -> None:
+    """Provider errors remain explicit instead of silently restarting playback."""
+    client.get_episode_details.side_effect = ProviderUnavailableError("offline")
+    with pytest.raises(ProviderUnavailableError, match="offline"):
+        await provider.get_resume_position("podcast-1:episode-1", MediaType.PODCAST_EPISODE)
 
 
 async def test_episodes_get_their_own_description_and_artwork(

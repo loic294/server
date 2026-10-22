@@ -6,10 +6,11 @@ import asyncio
 from bisect import bisect_right
 from collections.abc import AsyncGenerator, Sequence
 from contextlib import nullcontext
+from copy import copy
 from dataclasses import dataclass
 from functools import partial
 from itertools import batched
-from typing import TYPE_CHECKING, Any, Final, cast
+from typing import TYPE_CHECKING, Any, Final, TypedDict, cast
 
 from aiohttp import ClientError
 from music_assistant_models.access import PlaylistAccess
@@ -34,10 +35,19 @@ from music_assistant_models.errors import (
     ResourceTemporarilyUnavailable,
 )
 from music_assistant_models.helpers import create_safe_string
-from music_assistant_models.media_items import Playlist, PlaylistSummary, ProviderMapping, Track
+from music_assistant_models.media_items import (
+    Audiobook,
+    Playlist,
+    PlaylistSummary,
+    PodcastEpisode,
+    ProviderMapping,
+    Track,
+)
 
 from music_assistant.constants import (
+    DB_TABLE_MEDIA_PROGRESS,
     DB_TABLE_PLAYLISTS,
+    DB_TABLE_PROVIDER_MAPPINGS,
     HOMEASSISTANT_SYSTEM_USER,
     PLAYLIST_MEDIA_TYPES,
     PlaylistPlayableItem,
@@ -73,7 +83,7 @@ from music_assistant.helpers.playlists import (
 )
 from music_assistant.helpers.provider_access import access_allows, visible_music_sources
 from music_assistant.helpers.uri import create_uri, parse_uri
-from music_assistant.helpers.util import guard_single_request
+from music_assistant.helpers.util import guard_single_request, parse_optional_bool
 from music_assistant.models.media_capabilities import MediaCatalogMixin
 from music_assistant.models.music_provider import (
     PROVIDER_FETCH_ERRORS,
@@ -136,6 +146,14 @@ class _PlaylistMigrationTrackResult:
     error: str | None = None
 
 
+class PlaylistPlaybackSettings(TypedDict):
+    """Opt-in playback behavior attached to a library playlist."""
+
+    spoken_word: bool
+    remove_finished: bool
+    show_remaining_time: bool
+
+
 class PlaylistController(MediaControllerBase[Playlist]):
     """Controller managing MediaItems of type Playlist."""
 
@@ -192,6 +210,104 @@ class PlaylistController(MediaControllerBase[Playlist]):
             self.set_access,
             required_scope=Scope.LIBRARY_WRITE,
         )
+        self.mass.register_api_command(
+            "music/playlists/playback_settings",
+            self.get_playback_settings,
+            required_scope=Scope.LIBRARY_READ,
+        )
+        self.mass.register_api_command(
+            "music/playlists/set_playback_settings",
+            self.set_playback_settings,
+            required_scope=Scope.LIBRARY_WRITE,
+        )
+        self.mass.register_api_command(
+            "music/playlists/completed_items",
+            self.completed_items,
+            required_scope=Scope.LIBRARY_READ,
+        )
+
+    def playback_settings(self, item_id: str) -> PlaylistPlaybackSettings:
+        """Read stored settings for a library playlist without changing its metadata."""
+        return {
+            "spoken_word": self.mass.config.get(f"playlist_playback/{item_id}/spoken_word", False),
+            "remove_finished": self.mass.config.get(
+                f"playlist_playback/{item_id}/remove_finished", False
+            ),
+            "show_remaining_time": self.mass.config.get(
+                f"playlist_playback/{item_id}/show_remaining_time", False
+            ),
+        }
+
+    async def get_playback_settings(self, item_id: str) -> PlaylistPlaybackSettings:
+        """Return playback settings for a playlist visible to the caller."""
+        playlist = await self._get_visible_library_item(item_id)
+        return self.playback_settings(playlist.item_id)
+
+    async def set_playback_settings(
+        self,
+        item_id: str,
+        spoken_word: bool,
+        remove_finished: bool,
+        show_remaining_time: bool | None = None,
+    ) -> PlaylistPlaybackSettings:
+        """Save opt-in playback settings, leaving old playlists unchanged by default."""
+        playlist = await self.get_library_item(item_id)
+        self._check_may_manage(playlist)
+        if remove_finished and (not spoken_word or not playlist.is_editable or playlist.is_dynamic):
+            raise InvalidDataError(
+                "Removing finished items requires an editable, non-dynamic Podcast/Audiobook playlist"
+            )
+        if spoken_word and playlist.is_dynamic:
+            raise InvalidDataError("Dynamic playlists cannot use Podcast/Audiobook playback")
+        settings: PlaylistPlaybackSettings = {
+            "spoken_word": spoken_word,
+            "remove_finished": remove_finished,
+            "show_remaining_time": (
+                show_remaining_time
+                if show_remaining_time is not None
+                else self.playback_settings(playlist.item_id)["show_remaining_time"]
+            ),
+        }
+        # A separate namespace keeps provider metadata refreshes from resetting these preferences.
+        for key, value in settings.items():
+            self.mass.config.set(
+                f"playlist_playback/{playlist.item_id}/{key}", value, immediate=True
+            )
+        self.mass.signal_event(EventType.MEDIA_ITEM_UPDATED, playlist.uri, playlist)
+        return settings
+
+    async def completed_items(self, item_id: str) -> list[str]:
+        """Return items naturally completed and removed from this playlist for sync clients."""
+        playlist = await self._get_visible_library_item(item_id)
+        return cast(
+            "list[str]",
+            self.mass.config.get(f"playlist_playback/{playlist.item_id}/completed_uris", []),
+        )
+
+    async def remove_finished_item(self, item_id: str, uri: str, user_id: str | None) -> None:
+        """Remove a naturally completed item by identity, not its old queue position."""
+        set_current_user(await self._task_user(user_id))
+        playlist = await self._get_editable_library_item(item_id)
+        settings = self.playback_settings(playlist.item_id)
+        if not (settings["spoken_word"] and settings["remove_finished"]):
+            return
+        items = await self.tracks(playlist.item_id, "library", force_refresh=True, limit=None)
+        matching_item = next((item for item in items if item.uri == uri), None)
+        if matching_item is not None:
+            if matching_item.position is None or matching_item.position < 1:
+                raise InvalidDataError("The completed playlist item has no valid position")
+            await self._handle_remove_playlist_tracks(
+                playlist.item_id, (matching_item.position,), user_id
+            )
+        key = f"playlist_playback/{playlist.item_id}/completed_uris"
+        completed: list[str] = self.mass.config.get(key, [])
+        if uri not in completed:
+            self.mass.config.set(key, [*completed, uri], immediate=True)
+
+    async def remove_item_from_library(self, item_id: str | int, recursive: bool = True) -> None:
+        """Delete a playlist together with its playback preferences and completed identities."""
+        await super().remove_item_from_library(item_id, recursive)
+        self.mass.config.remove(f"playlist_playback/{int(item_id)}")
 
     @property
     def summary_query(self) -> tuple[str, dict[str, Any]]:
@@ -291,7 +407,7 @@ class PlaylistController(MediaControllerBase[Playlist]):
                 )
         if favorite is not None:
             items = [item for item in items if item.favorite is favorite]
-        return apply_listing(
+        result = apply_listing(
             items,
             ListingType.PLAYLIST_TRACKS,
             search=search,
@@ -301,6 +417,9 @@ class PlaylistController(MediaControllerBase[Playlist]):
             offset=offset,
             random_seed=random_seed,
         )
+        if library_item and self.playback_settings(library_item.item_id)["show_remaining_time"]:
+            return await self._with_resume_positions(result)
+        return result
 
     async def iter_tracks(
         self,
@@ -1805,6 +1924,66 @@ class PlaylistController(MediaControllerBase[Playlist]):
             return []
         async with self.mass.cache.handle_refresh(force_refresh):
             return await provider.get_playlist_tracks(item_id, page=page)
+
+    async def _with_resume_positions(
+        self, items: list[PlaylistPlayableItem]
+    ) -> list[PlaylistPlayableItem]:
+        """Overlay the current user's saved progress without updating the shared listing."""
+        spoken_items = [item for item in items if isinstance(item, Audiobook | PodcastEpisode)]
+        if not spoken_items or (user := get_current_user()) is None:
+            return items
+        instances = {
+            mapping.provider_instance for item in spoken_items for mapping in item.provider_mappings
+        }
+        rows = await self.mass.music.database.get_rows_from_query(
+            "SELECT progress.media_type, progress.provider, progress.item_id, "
+            "progress.seconds_played, progress.fully_played, "
+            "mappings.provider_instance, mappings.provider_item_id "
+            f"FROM {DB_TABLE_MEDIA_PROGRESS} AS progress "
+            f"LEFT JOIN {DB_TABLE_PROVIDER_MAPPINGS} AS mappings "
+            "ON progress.provider = 'library' "
+            "AND mappings.media_type = progress.media_type "
+            "AND mappings.item_id = progress.item_id "
+            "AND mappings.provider_instance IN :instances "
+            "WHERE progress.userid = :userid AND progress.media_type IN :media_types "
+            "AND (progress.provider IN :providers OR mappings.provider_instance IS NOT NULL) "
+            "ORDER BY progress.timestamp",
+            {
+                "userid": user.user_id,
+                "media_types": sorted({item.media_type.value for item in spoken_items}),
+                "providers": sorted({item.provider for item in spoken_items} | instances),
+                "instances": sorted(instances),
+            },
+            limit=0,
+        )
+        progress: dict[tuple[str, str, str], Mapping[str, Any]] = {}
+        for row in rows:
+            progress[(row["media_type"], row["provider"], str(row["item_id"]))] = row
+            if row["provider_instance"] is not None:
+                progress[(row["media_type"], row["provider_instance"], row["provider_item_id"])] = (
+                    row
+                )
+        result: list[PlaylistPlayableItem] = []
+        for item in items:
+            if not isinstance(item, Audiobook | PodcastEpisode):
+                result.append(item)
+                continue
+            keys = [(item.media_type.value, item.provider, item.item_id)]
+            keys.extend(
+                (item.media_type.value, mapping.provider_instance, mapping.item_id)
+                for mapping in item.provider_mappings
+            )
+            saved = next((progress[key] for key in keys if key in progress), None)
+            if saved is None:
+                result.append(item)
+                continue
+            updated = copy(item)
+            if saved["seconds_played"] is not None:
+                updated.resume_position_ms = int(saved["seconds_played"] * 1000)
+            if saved["fully_played"] is not None:
+                updated.fully_played = parse_optional_bool(saved["fully_played"])
+            result.append(updated)
+        return result
 
     async def _add_audio_metadata(self, items: Sequence[PlaylistPlayableItem]) -> None:
         """

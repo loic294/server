@@ -85,6 +85,9 @@ def _resolver() -> tuple[MediaResolver, Mock]:
     """Create a bare resolver plus the Mock recording its ``mark_item_played`` calls."""
     resolver = MediaResolver.__new__(MediaResolver)
     resolver.mass = Mock()
+    resolver.mass.music.playlists.playback_settings = Mock(
+        return_value={"spoken_word": False, "remove_finished": False}
+    )
     resolver.mass.create_task = Mock(side_effect=lambda coro: coro)
     mark = Mock()
     resolver.mass.music.mark_item_played = mark
@@ -268,6 +271,10 @@ def _play_media_controller(
     ctrl = PlayerQueuesController.__new__(PlayerQueuesController)
     ctrl.logger = Mock()
     ctrl.mass = Mock()
+    ctrl.mass.music.playlists.get_library_item_by_prov_id = AsyncMock(return_value=None)
+    ctrl.mass.music.playlists.playback_settings = Mock(
+        return_value={"spoken_word": False, "remove_finished": False}
+    )
     ctrl.mass.music.get_item_by_uri = AsyncMock(return_value=media_item)
     ctrl.mass.players.get_player = Mock(return_value=Mock(extra_data={}))
     lock_cm = MagicMock()

@@ -37,6 +37,7 @@ from music_assistant_models.media_items import (
     ItemMapping,
     MediaItemType,
     PlayableMediaItemType,
+    Playlist,
     PodcastEpisode,
     Track,
     media_from_dict,
@@ -459,12 +460,51 @@ class QueueLoaderMixin(_PlayerQueuesBase):
 
     async def _get_resume_position(self, queue_item: QueueItem) -> int:
         """Return the position (in seconds) to resume an audiobook/episode from, 0 to start over."""
+        spoken_word = False
+        origin = queue_item.origin
+        media_item = queue_item.media_item
+        if (
+            isinstance(media_item, Audiobook | PodcastEpisode)
+            and origin is not None
+            and origin.container is not None
+            and origin.container.media_type == MediaType.PLAYLIST
+            and origin.container.provider == "library"
+        ):
+            spoken_word = self.mass.music.playlists.playback_settings(origin.container.item_id)[
+                "spoken_word"
+            ]
+        if spoken_word and isinstance(media_item, Audiobook | PodcastEpisode):
+            if queue_item.extra_attributes.get("start_from_beginning"):
+                return 0
+            pinned = (
+                (origin.provider_instance, origin.item_id)
+                if origin and origin.provider_instance and origin.item_id
+                else None
+            )
+            fully_played, position = await self.mass.music.get_resume_position(
+                media_item,
+                userid=self._queue_data[queue_item.queue_id].userid,
+                pinned=pinned,
+                prefer_provider=True,
+            )
+            media_item.fully_played = fully_played
+            media_item.resume_position_ms = 0 if fully_played else position
+            if position and not (queue_item.duration or media_item.duration):
+                details = await self.mass.music.get_item_by_uri(queue_item.uri)
+                if isinstance(details, Audiobook | PodcastEpisode) and details.duration:
+                    self._set_missing_duration(queue_item, details.duration)
         if not (resume_position_ms := getattr(queue_item.media_item, "resume_position_ms", 0)):
             return 0
         # the client may have fetched the item before its duration was known
         await self._restore_probed_duration(queue_item)
         if queue_item.duration or getattr(queue_item.media_item, "duration", 0):
+            if spoken_word:
+                return max(0, int(resume_position_ms / 1000))
             return max(0, int((resume_position_ms - 500) / 1000))
+        if spoken_word:
+            raise InvalidDataError(
+                f"Cannot resume {queue_item.name}: duration is unknown; refusing to restart at zero"
+            )
         # seeking needs a duration, which is determined while streaming
         self.logger.debug(
             "Can not resume %s at %ss: its duration is not known (yet)",
@@ -852,6 +892,18 @@ class QueueLoaderMixin(_PlayerQueuesBase):
                         raise InvalidDataError("ItemMapping has no URI")
                     media_item = await self.mass.music.get_item_by_uri(media_item.uri)
 
+                if isinstance(media_item, Playlist) and media_item.provider != "library":
+                    library_playlist = await self.mass.music.playlists.get_library_item_by_prov_id(
+                        media_item.item_id, media_item.provider
+                    )
+                    if (
+                        library_playlist
+                        and self.mass.music.playlists.playback_settings(library_playlist.item_id)[
+                            "spoken_word"
+                        ]
+                    ):
+                        media_item = library_playlist
+
                 # never enqueue what this user has no music source for; failing here keeps
                 # the caller from finding out only when the item is about to be streamed
                 self.mass.music.check_item_playable_for_user(media_item, playback_user)
@@ -913,6 +965,10 @@ class QueueLoaderMixin(_PlayerQueuesBase):
                     plays_in_order = media_item.media_type in ORDERED_MEDIA_TYPES or bool(
                         artist_tracks and artist_tracks.plays_albums
                     )
+                    if isinstance(media_item, Playlist) and media_item.provider == "library":
+                        plays_in_order |= self.mass.music.playlists.playback_settings(
+                            media_item.item_id
+                        )["spoken_word"]
                     shuffle_settled = True
                     await self._apply_shuffle(
                         queue_id,
@@ -1052,6 +1108,10 @@ class QueueLoaderMixin(_PlayerQueuesBase):
 
         if not queue_items:
             raise MediaNotFoundError("No playable items found", translation_key="no_playable_items")
+
+        if start_from_beginning:
+            for queue_item in queue_items:
+                queue_item.extra_attributes["start_from_beginning"] = True
 
         # playing an album again is a new play of it, so it is credited again; read before the
         # enqueue, which appends the queue's remaining items to this list

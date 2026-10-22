@@ -272,6 +272,40 @@ async def test_a_playlist_plays_in_the_order_its_listing_shows(
     assert _ids(played) == _ids(listed) == expected
 
 
+@pytest.mark.parametrize(("sort_key", "expected"), PLAYLIST_ORDERS.items())
+async def test_spoken_word_playlist_plays_in_the_order_its_listing_shows(
+    mass: MusicAssistant, sort_key: str, expected: list[str]
+) -> None:
+    """Resume-enabled playlists start with the first item in the selected sort order."""
+    library_playlist = await mass.music.playlists.add_item_to_library(_playlist())
+    sort_field, sort_direction = PLAYLIST_SORTS[sort_key]
+
+    with patch.object(
+        mass.music.playlists,
+        "playback_settings",
+        return_value={
+            "spoken_word": True,
+            "remove_finished": False,
+            "show_remaining_time": False,
+        },
+    ):
+        played = await _resolver(mass)._resolve_media_items(
+            _playlist(), sort_field=sort_field, sort_direction=sort_direction
+        )
+    listed = await mass.music.playlists.tracks(
+        library_playlist.item_id,
+        "library",
+        sort_field=sort_field,
+        sort_direction=sort_direction,
+        limit=0,
+    )
+
+    assert _ids(played) == _ids(listed) == expected
+    assert played[0].origin is not None
+    assert played[0].origin.container is not None
+    assert played[0].origin.container.item_id == library_playlist.item_id
+
+
 @pytest.mark.parametrize(("sort_key", "expected"), ALBUM_ORDERS.items())
 async def test_an_album_plays_in_the_order_its_listing_shows(
     mass: MusicAssistant, sort_key: str, expected: list[str]

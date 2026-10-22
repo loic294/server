@@ -1,5 +1,9 @@
 # Playlist test server
 
+This custom app is superseded by the official **Music Assistant DEV SERVER**
+configured with the fork sources. Leave this app stopped and follow the
+[current test deployment guide](../docs/test-deployment.md).
+
 This is an **unofficial development build**, not Music Assistant 2.10.7.
 It includes the matching custom web frontend and runs on amd64 and aarch64.
 

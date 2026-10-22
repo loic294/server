@@ -5,6 +5,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from music_assistant.controllers.webserver.controller import WebserverController
+from music_assistant.helpers.network_profile import PLAYLIST_TEST_NETWORK_PROFILE
 
 
 @pytest.fixture
@@ -40,3 +41,14 @@ def test_url_follows_the_bind_address(
     mock_mass.streams.publish_ip = publish_ip
 
     assert webserver.internal_sendspin_url == expected
+
+
+def test_dev_proxy_reaches_its_own_sendspin_server(
+    webserver: WebserverController, mock_mass: MagicMock
+) -> None:
+    """The DEV web proxy must never connect to production's Sendspin listener."""
+    mock_mass.network_profile = PLAYLIST_TEST_NETWORK_PROFILE
+    mock_mass.streams.bind_ip = "127.0.0.1"
+    mock_mass.streams.publish_ip = "127.0.0.1"
+
+    assert webserver.internal_sendspin_url == "ws://127.0.0.1:9027/sendspin"

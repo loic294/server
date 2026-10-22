@@ -72,7 +72,6 @@ from music_assistant.constants import (
     CONF_LOG_LEVEL,
     CONF_PLAYERS,
     CONF_PROVIDERS,
-    SENDSPIN_SERVER_PORT,
     VERBOSE_LOG_LEVEL,
 )
 from music_assistant.controllers.webserver.helpers.auth_middleware import get_current_user
@@ -1112,9 +1111,10 @@ class SendspinProvider(PlayerProvider):
         self._remove_orphan_virtual_player_configs()
         # Start server for handling incoming Sendspin connections from clients
         # and mDNS discovery of new clients
+        port = self.mass.network_profile.sendspin_port
         try:
             await self.server_api.start_server(
-                port=SENDSPIN_SERVER_PORT,
+                port=port,
                 host=self.mass.streams.bind_ip,
                 advertise_addresses=[self.mass.streams.publish_ip],
             )
@@ -1123,9 +1123,7 @@ class SendspinProvider(PlayerProvider):
             # without its listener every Sendspin player fails silently,
             # so surface this as a provider error the user can see
             self.unload_with_error(
-                SetupFailedError(
-                    f"Could not start the Sendspin server on port {SENDSPIN_SERVER_PORT}: {err}"
-                )
+                SetupFailedError(f"Could not start the Sendspin server on port {port}: {err}")
             )
             return
         for address in self._manual_ip_config:

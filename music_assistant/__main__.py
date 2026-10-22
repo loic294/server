@@ -24,6 +24,7 @@ from music_assistant.constants import MASS_LOGGER_NAME, VERBOSE_LOG_LEVEL
 from music_assistant.helpers.diagnostics import install_diagnostics_log_handler
 from music_assistant.helpers.json import json_loads
 from music_assistant.helpers.logging import activate_log_queue_handler
+from music_assistant.helpers.network_profile import network_profile_for_options
 from music_assistant.helpers.util import cap_native_thread_pools, set_model_cache_dirs
 from music_assistant.mass import MusicAssistant
 
@@ -261,6 +262,15 @@ def main() -> None:
             LOGGER.warning("Could not raise open-file limit: %s", err)
 
     mass = MusicAssistant(data_dir, cache_dir, safe_mode)
+    mass.network_profile = network_profile_for_options(hass_options)
+    if not mass.network_profile.ingress_enabled:
+        logger.info(
+            "Playlist DEV profile: web port %s, stream port %s, Sendspin port %s; "
+            "Home Assistant ingress disabled. Open the DEV server directly, not its sidebar.",
+            mass.network_profile.web_port,
+            mass.network_profile.stream_port,
+            mass.network_profile.sendspin_port,
+        )
 
     # enable alpine subprocess workaround
     _enable_posix_spawn()

@@ -568,7 +568,8 @@ class StreamsController(CoreController):
             ConfigEntry(
                 key=CONF_BIND_PORT,
                 type=ConfigEntryType.INTEGER,
-                default_value=DEFAULT_PORT,
+                default_value=self.mass.network_profile.stream_port or DEFAULT_PORT,
+                hidden=self.mass.network_profile.stream_port is not None,
                 category="generic",
                 advanced=True,
                 requires_reload=True,
@@ -609,7 +610,9 @@ class StreamsController(CoreController):
         # perform check for ffmpeg version
         await check_ffmpeg_version()
         # start the webserver
-        self.publish_port = config.get_value(CONF_BIND_PORT, DEFAULT_PORT)
+        self.publish_port = self.mass.network_profile.stream_port or config.get_value(
+            CONF_BIND_PORT, DEFAULT_PORT
+        )
         configured_publish_ip = str(config.get_value(CONF_PUBLISH_IP) or CONF_VALUE_AUTO)
         self._configured_publish_ip = (
             None if configured_publish_ip == CONF_VALUE_AUTO else configured_publish_ip

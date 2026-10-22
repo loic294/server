@@ -14,6 +14,7 @@ from aiohttp.test_utils import make_mocked_request
 
 from music_assistant.controllers.webserver.controller import WebserverController
 from music_assistant.controllers.webserver.websocket_client import WebsocketClientHandler
+from music_assistant.helpers.network_profile import DEFAULT_NETWORK_PROFILE
 
 if TYPE_CHECKING:
     from music_assistant_models.auth import User
@@ -25,6 +26,7 @@ if TYPE_CHECKING:
 def mock_mass() -> MagicMock:
     """Create a mock Music Assistant instance."""
     mass = MagicMock()
+    mass.network_profile = DEFAULT_NETWORK_PROFILE
     mass.config.get_raw_core_config_value.return_value = "GLOBAL"
     return mass
 

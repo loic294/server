@@ -82,6 +82,7 @@ from music_assistant.helpers.api import APICommandHandler, api_command
 from music_assistant.helpers.build_info import get_official_build_info
 from music_assistant.helpers.diagnostics import install_diagnostics_log_handler
 from music_assistant.helpers.images import detect_provider_icons
+from music_assistant.helpers.network_profile import DEFAULT_NETWORK_PROFILE
 from music_assistant.helpers.provider_access import visible_music_sources
 from music_assistant.helpers.util import (
     TaskManager,
@@ -245,6 +246,7 @@ class MusicAssistant:
         # default, which is a RAM-backed tmpfs on HAOS - redirect to the data volume.
         os.environ.setdefault("SQLITE_TMPDIR", storage_path)
         self.safe_mode = safe_mode
+        self.network_profile = DEFAULT_NETWORK_PROFILE
         # we dynamically register command handlers which can be consumed by the apis
         self.command_handlers: dict[str, APICommandHandler] = {}
         self._subscribers: set[EventSubscriptionType] = set()

@@ -102,7 +102,7 @@ class DiscoveryController(CoreController):
         # the mdns record embeds the server info, so refresh it when that info
         # changes (e.g. the server was renamed or its state/urls changed)
         self.mass.subscribe(self._on_core_state_updated, EventType.CORE_STATE_UPDATED)
-        if self.mass.running_as_hass_addon:
+        if self.mass.running_as_hass_addon and self.mass.network_profile.ingress_enabled:
             # (re)announce to HA supervisor to make sure that HA picks it up
             await self._announce_to_homeassistant()
             self._schedule_periodic_ha_announce()

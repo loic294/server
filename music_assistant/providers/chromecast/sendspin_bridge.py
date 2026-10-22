@@ -38,7 +38,6 @@ from music_assistant.constants import (
     CONF_PLAYERS,
     CONF_PROTOCOL_EXPERIMENTAL_NOTE,
     CONF_PROTOCOL_PARENT_ID,
-    SENDSPIN_SERVER_PORT,
 )
 from music_assistant.helpers.util import format_ip_for_url, is_valid_mac_address
 from music_assistant.providers.chromecast.constants import get_cast_model_static_delay
@@ -791,7 +790,8 @@ class SendspinChromecastBridge:
         publish_ip = self.mass.streams.publish_ip
         # sendspin-js's SendspinCore appends `/sendspin` to baseUrl when constructing
         # the WebSocket URL. Send the bare server URL here so it ends up correct.
-        server_url = f"ws://{format_ip_for_url(publish_ip)}:{SENDSPIN_SERVER_PORT}"
+        port = self.mass.network_profile.sendspin_port
+        server_url = f"ws://{format_ip_for_url(publish_ip)}:{port}"
         raw_delay = self.mass.config.get_raw_player_config_value(
             self._bridge_client_id, CONF_SENDSPIN_STATIC_DELAY
         )

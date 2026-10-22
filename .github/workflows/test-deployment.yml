@@ -1,11 +1,6 @@
 name: Playlist test deployment
 
 on:
-  push:
-    branches: [playlist-playback-test]
-    paths-ignore:
-      - "playlist_test/config.yaml"
-      - "**/*.md"
   workflow_dispatch:
 
 permissions:

@@ -1,95 +1,87 @@
-# Unofficial playlist test deployment
+# Playlist testing with the official Music Assistant DEV SERVER
 
 These builds are maintained in `loic294` forks on `playlist-playback-test`.
 They include development server changes, not just patches to stable 2.10.7.
 Do not upgrade your only production database in place.
 
-## Build and image hosting
-
-The [test deployment workflow](https://github.com/loic294/server/actions/workflows/test-deployment.yml)
-builds the exact frontend commit in `.github/test-frontend-sha`, runs its tests,
-lint and build, packages matching Python wheels, and builds native amd64/arm64
-images using the upstream public base image. It does not publish to PyPI or need
-any upstream maintainer secrets.
-
-Successful runs publish:
-
-- `ghcr.io/loic294/music-assistant-playlist-test:2.11.0.devN`
-- `ghcr.io/loic294/music-assistant-playlist-test:playlist-test` (moving test tag)
-- `test-wheels`, containing the two wheels and image requirements.
-
-Each architecture's installed versions and frontend assets are checked before
-the manifest and Home Assistant app version are published. Use a numbered tag
-for reproducibility. Build labels record both source revisions.
-
-**First publication:** GitHub container packages default to private. In the
-package settings, set `music-assistant-playlist-test` to **Public** so Home
-Assistant can pull without a registry password. A public repository alone does
-not guarantee a public package. Verify an unauthenticated pull before installing.
-GitHub Actions must be enabled in the forks, with package write permissions for
-this workflow.
-
-For a later frontend change, commit and push it in the frontend fork, replace
-`.github/test-frontend-sha` with its full commit SHA, then commit and push the
-server branch. Server pushes trigger a build; a manual run rebuilds the current
-pinned pair. Never point this file at an uncommitted local frontend.
-
 ## Home Assistant OS
 
 1. Make a full backup, including Music Assistant, before testing.
-2. Under **Settings > Apps > App store > Repositories**, add
-   `https://github.com/loic294/server`. On older Home Assistant versions these
+2. Use the official repository, `https://github.com/music-assistant/home-assistant-addon`,
+   under **Settings > Apps > App store > Repositories**. On older versions these
    menus are named **Add-ons** and **Add-on store**.
-3. Reload the store after the workflow succeeds. Install **Music Assistant -
-   Playlist Test**. Both Intel/AMD 64-bit and ARM64 hosts are supported.
-4. Stop the official Music Assistant app, turn off its watchdog and automatic
-   startup temporarily, and leave it installed. Only then start the test app.
-   They share ports 8094/8095 and cannot run together on the same host.
-5. Open the test app's web UI and complete setup. This app has its own data
-   directory, so the official server's data is preserved. Configure only the
-   providers/playlists you need for the test.
+3. Install/update **Music Assistant DEV SERVER**. If it is hidden, enable Advanced
+   mode in your Home Assistant user profile and reload the store.
+4. Leave the former custom **Music Assistant - Playlist Test** app stopped. Keep
+   your normal Music Assistant app running.
+5. Set the DEV app's configuration to:
 
-The server fork's **default branch must remain `playlist-playback-test`**:
-Home Assistant reads `repository.yaml` and `playlist_test/config.yaml` there.
-The workflow updates the offered app version only after both images pass.
+   ```yaml
+   log_level: info
+   safe_mode: false
+   server_repo: loic294/server@playlist-playback-test
+   frontend_repo: loic294/frontend@playlist-playback-test
+   ```
 
-To roll back, stop the test app and restart the official 2.10.7 app, restoring
-its startup/watchdog settings. Do not point 2.10.7 at a newer development database.
-Do not copy a live database between apps.
+6. Start the DEV app and wait for **both** source installations and the frontend
+   build to finish. This can take several minutes. Leaving `frontend_repo` blank
+   would use the bundled UI instead of our UI changes.
+7. Check the log for `Playlist DEV profile: web port 8195, stream port 8197,
+   Sendspin port 9027`.
+8. Open **http://HOME_ASSISTANT_IP:8195** directly. On this network that is
+   **http://192.168.68.76:8195**. Complete setup in this separate DEV data directory.
 
-## Provider credentials
+The fork activates this fixed network profile only when the official DEV app's
+`server_repo` is exactly `loic294/server@playlist-playback-test`. Keep that value,
+including its branch name. Other source selections and normal installations keep
+their existing ports. The profile overrides previously saved web/stream ports
+for this DEV instance at runtime; it does not rewrite saved settings.
 
-The upstream bundled application credentials are licensed for official builds
-only. This pipeline deliberately does not fetch, extract or redistribute them.
-Pocket Casts authenticates with your own account. Some other providers require
-your own registered application credentials and may not work out of the box.
-See `music_assistant/helpers/app_vars.py` for the source-build credential options.
-Never commit credentials, tokens, account databases or local configuration.
+| Listener | Normal server | DEV test profile |
+| --- | --- | --- |
+| Web/API | 8095 | 8195 |
+| Audio streams | 8097 | 8197 |
+| Sendspin | 8927 | 9027 |
+| Home Assistant ingress | 8094 | Disabled |
+
+**Do not use the DEV app's Open Web UI/sidebar link.** The official add-on fixes
+that link to ingress port 8094, which belongs to your normal server. Our DEV
+profile disables both its ingress listener and ingress-based Home Assistant
+auto-announcement to avoid conflicts or accidentally announcing production.
+Use the direct URL above; the DEV app's startup log also explains this.
+
+The official DEV app builds and installs the fork sources itself. There is no
+custom Docker image to build, publish or select. Restart it after pushing a source
+change to fetch/build the updated branch. Its own tooling manages the official
+image's dependencies and provider application variables.
+
+To roll back, stop the DEV app. Your normal server and its data remain unchanged.
+Do not copy a live database between apps or open a development database with 2.10.7.
+
+## Former custom build
+
+The custom image/app is superseded by the official DEV app. The old Docker
+workflow is manual-only and no longer runs on branch pushes. Existing images
+remain available, but are not the deployment path described here.
 
 ## Desktop
 
 The desktop companion displays the frontend hosted by the selected server.
 There is no second copy of playlist logic to implement in Rust.
 
-Use the normal desktop app and select `http://HOME_ASSISTANT_IP:8095`, or build
-the fork:
+Use the normal desktop app. In its server selection/settings, connect to
+**http://192.168.68.76:8195**, not the normal server at port 8095.
+No custom desktop build is necessary.
 
-```sh
-cd ../desktop-app
-yarn build --bundles app --config src-tauri/tauri.test.conf.json
-open "src-tauri/target/release/bundle/macos/Music Assistant Playlist Test.app"
-```
-
-The fork's **Desktop test build** workflow also produces an unsigned macOS app
-artifact without Apple or updater-signing secrets. Unsigned downloaded builds
-may require **Open Anyway** in macOS Privacy & Security. The official desktop
-updater still tracks official releases; that is safe because the companion is
-unchanged and the custom feature lives on the server.
+The earlier desktop test package was not actually isolated: its native settings
+path was shared with the normal app, and its official updater could replace it.
+Do not rely on that package as an isolated test environment. Connecting the
+normal desktop app to the DEV URL loads the custom frontend directly.
 
 ## Android
 
 Use the mobile fork's **Android test build** workflow and sideload its APK,
-then configure `http://HOME_ASSISTANT_IP:8095`. See the mobile fork's test-build
+then configure `http://HOME_ASSISTANT_IP:8195`. See the mobile fork's test-build
 documentation for its app identity and installation instructions. A GitHub
 Actions artifact requires signing in to GitHub to download it.
 

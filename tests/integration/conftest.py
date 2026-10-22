@@ -113,7 +113,7 @@ async def e2e_mass(tmp_path: pathlib.Path) -> AsyncGenerator[MusicAssistant]:
     mass_instance.dev_mode = True
 
     with (
-        use_ephemeral_server_ports(),
+        use_ephemeral_server_ports(mass_instance),
         patch(
             "music_assistant.controllers.discovery.controller.AsyncZeroconf",
             return_value=_create_mock_zeroconf(),

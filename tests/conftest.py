@@ -165,7 +165,7 @@ async def full_mass_context(tmp_path: pathlib.Path) -> AsyncGenerator[MusicAssis
     mock_browser = NonCallableMagicMock()  # Use NonCallable to avoid api_cmd issues
 
     with (
-        use_ephemeral_server_ports(),
+        use_ephemeral_server_ports(mass_instance),
         patch(
             "music_assistant.controllers.discovery.controller.AsyncZeroconf",
             return_value=mock_zc,

@@ -10,6 +10,10 @@ from unittest.mock import AsyncMock, MagicMock
 from music_assistant_models.errors import SetupFailedError
 
 from music_assistant.constants import CONF_ENTRY_MANUAL_DISCOVERY_IPS, SENDSPIN_SERVER_PORT
+from music_assistant.helpers.network_profile import (
+    DEFAULT_NETWORK_PROFILE,
+    PLAYLIST_TEST_NETWORK_PROFILE,
+)
 from music_assistant.providers.sendspin.provider import SendspinProvider
 from tests.common import bound_sendspin_port
 from tests.conftest import full_mass_context
@@ -17,6 +21,7 @@ from tests.conftest import full_mass_context
 
 def _make_provider(start_server: AsyncMock) -> tuple[SendspinProvider, MagicMock, MagicMock]:
     mass = MagicMock()
+    mass.network_profile = DEFAULT_NETWORK_PROFILE
     mass.players.iter_players.return_value = []
     manifest = MagicMock(domain="sendspin")
     manifest.name = "Sendspin"
@@ -70,6 +75,16 @@ async def test_server_start_success_connects_manual_clients() -> None:
     mass.call_later.assert_not_called()
     server_api.connect_to_client.assert_called_once()
     server_api.close.assert_awaited_once()
+
+
+async def test_dev_listener_uses_the_isolated_sendspin_port() -> None:
+    """The DEV provider must not claim the normal server's Sendspin listener."""
+    provider, mass, server_api = _make_provider(AsyncMock())
+    mass.network_profile = PLAYLIST_TEST_NETWORK_PROFILE
+
+    await provider.loaded_in_mass()
+
+    assert server_api.start_server.await_args.kwargs["port"] == 9027
 
 
 async def test_full_boot_does_not_depend_on_the_default_sendspin_port(

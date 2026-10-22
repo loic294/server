@@ -21,6 +21,10 @@ from music_assistant.controllers.webserver.controller import (
     WebserverController,
 )
 from music_assistant.helpers.datetime import utc
+from music_assistant.helpers.network_profile import (
+    DEFAULT_NETWORK_PROFILE,
+    PLAYLIST_TEST_NETWORK_PROFILE,
+)
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -60,10 +64,27 @@ def mock_mass() -> MagicMock:
     # deliberate override of the package fixture: the base URL these tests exercise
     # is also derived from the addon and provider state
     mass = MagicMock()
+    mass.network_profile = DEFAULT_NETWORK_PROFILE
     mass.config.get_raw_core_config_value.return_value = "GLOBAL"
     mass.running_as_hass_addon = False
     mass.providers = []
     return mass
+
+
+async def test_dev_profile_overrides_saved_normal_port_and_disables_ingress(
+    mock_mass: MagicMock, tmp_path: Path
+) -> None:
+    """An existing DEV data directory cannot reintroduce the production port conflict."""
+    mock_mass.network_profile = PLAYLIST_TEST_NETWORK_PROFILE
+    mock_mass.running_as_hass_addon = True
+
+    webserver, server = await _setup_webserver(
+        mock_mass, tmp_path, certificate="", private_key="", enable_ssl=False
+    )
+
+    assert webserver.publish_port == 8195
+    assert server.setup.await_args.kwargs["bind_port"] == 8195
+    assert server.setup.await_args.kwargs["ingress_tcp_site_params"] is None
 
 
 async def test_valid_certificate_advertises_tls(

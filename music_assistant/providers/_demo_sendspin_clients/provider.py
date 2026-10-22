@@ -9,7 +9,6 @@ from typing import TYPE_CHECKING, cast
 from music_assistant_models.config_entries import ConfigEntry, ConfigValueOption
 from music_assistant_models.enums import ConfigEntryType
 
-from music_assistant.constants import SENDSPIN_SERVER_PORT
 from music_assistant.helpers.util import format_ip_for_url
 from music_assistant.models.player_provider import PlayerProvider
 
@@ -169,7 +168,8 @@ class DemoSendspinClientsProvider(PlayerProvider):
             host = "::1"
         else:
             host = bind_ip
-        return f"ws://{format_ip_for_url(host)}:{SENDSPIN_SERVER_PORT}/sendspin"
+        port = self.mass.network_profile.sendspin_port
+        return f"ws://{format_ip_for_url(host)}:{port}/sendspin"
 
     def _device_entries(self, scenario: Scenario) -> list[ConfigEntry]:
         """Return the status label and controls for one fake device."""

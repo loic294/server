@@ -56,7 +56,6 @@ from music_assistant.constants import (
     DEFAULT_HOST,
     INGRESS_SERVER_PORT,
     RESOURCES_DIR,
-    SENDSPIN_SERVER_PORT,
     VERBOSE_LOG_LEVEL,
     WILDCARD_BIND_IPS,
 )
@@ -298,7 +297,8 @@ class WebserverController(CoreController):
         connect_ip = _get_internal_connect_ip(
             self.mass.streams.bind_ip, str(self.mass.streams.publish_ip)
         )
-        return f"ws://{format_ip_for_url(connect_ip)}:{SENDSPIN_SERVER_PORT}/sendspin"
+        port = self.mass.network_profile.sendspin_port
+        return f"ws://{format_ip_for_url(connect_ip)}:{port}/sendspin"
 
     async def get_config_entries(self) -> tuple[ConfigEntry, ...]:
         """Return all Config Entries for this core module (if any)."""
@@ -401,7 +401,7 @@ class WebserverController(CoreController):
         routes.append(("GET", "/sendspin", self._sendspin_proxy.handle_sendspin_proxy))
         await self.auth.setup()
         # start the webserver
-        if self.mass.running_as_hass_addon:
+        if self.mass.running_as_hass_addon and self.mass.network_profile.ingress_enabled:
             # if we're running on the HA supervisor we start an additional TCP site
             # on the internal ("172.30.32.") IP for the HA ingress proxy - that address
             # lives on a docker bridge, so it needs the unfiltered adapter list
@@ -414,7 +414,7 @@ class WebserverController(CoreController):
             ingress_tcp_site_params = None
         port_value = config.get_value(CONF_BIND_PORT)
         assert isinstance(port_value, int)
-        self.publish_port = port_value
+        self.publish_port = self.mass.network_profile.web_port or port_value
         bind_ip = cast("str | None", config.get_value(CONF_BIND_IP))
         # Create SSL context if SSL is enabled
         ssl_context = None
@@ -721,7 +721,8 @@ class WebserverController(CoreController):
             ConfigEntry(
                 key=CONF_BIND_PORT,
                 type=ConfigEntryType.INTEGER,
-                default_value=DEFAULT_SERVER_PORT,
+                default_value=self.mass.network_profile.web_port or DEFAULT_SERVER_PORT,
+                hidden=self.mass.network_profile.web_port is not None,
                 advanced=True,
                 requires_reload=True,
             ),
